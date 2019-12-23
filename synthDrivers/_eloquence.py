@@ -1,14 +1,14 @@
 from logHandler import log
 import tones
 import ctypes
-from cStringIO import StringIO
+from io import StringIO
 gb = StringIO()
 speaking=False
 lang='enu'
 from ctypes import *
 import config
 from ctypes import wintypes
-import threading, os, Queue, re
+import threading, os, queue as Queue, re
 import nvwave
 user32 = windll.user32
 eci = None

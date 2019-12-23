@@ -7,10 +7,10 @@ punctuation = [x for x in punctuation]
 from ctypes import *
 import ctypes.wintypes
 from ctypes import wintypes
-import synthDriverHandler, os, config, re, Queue, nvwave, threading, logging
+import synthDriverHandler, os, config, re, queue as Queue, nvwave, threading, logging
 from logHandler import log
 from synthDriverHandler import SynthDriver,VoiceInfo
-import _eloquence
+import synthDrivers._eloquence as _eloquence
 import languageHandler
 from collections import OrderedDict
 minRate=40
@@ -90,19 +90,19 @@ class SynthDriver(synthDriverHandler.SynthDriver):
   defaultLanguage=self.language
   outlist = []
   for item in speechSequence:
-   if isinstance(item,basestring):
-    s=unicode(item)
+   if isinstance(item,str):
+    s=item
     s = self.xspeakText(s)
     outlist.append((_eloquence.speak, (s,)))
     last = s
    elif isinstance(item,speech.IndexCommand):
     outlist.append((_eloquence.index, (item.index,)))
    elif isinstance(item,speech.LangChangeCommand):
-    if (item.lang and langsAnnotations.has_key(item.lang)):
+    if (item.lang and item.lang in langsAnnotations):
      if self.speakingLanguage!=item.lang and item.lang!=self.speakingLanguage[0:2]:
       outlist.append((_eloquence.speak, (langsAnnotations[item.lang],)))
       self.speakingLanguage=item.lang
-    elif (item.lang and langsAnnotations.has_key(item.lang[0:2])):
+    elif (item.lang and item.lang[0:2] in langsAnnotations):
      if self.speakingLanguage!=item.lang and item.lang!=self.speakingLanguage[0:2]:
       outlist.append((_eloquence.speak, (langsAnnotations[item.lang[0:2]],)))
      self.speakingLanguage=item.lang[0:2]
@@ -128,8 +128,8 @@ class SynthDriver(synthDriverHandler.SynthDriver):
   if _eloquence.params[9] == 131072 or _eloquence.params[9] == 131073: text = resub(spanish_fixes, text)
   if _eloquence.params[9] in (196609, 196608): text = resub(french_fixes, text)
 #this converts to ansi for anticrash. If this breaks with foreign langs, we can remove it.
-  text = text.encode('mbcs')
-  text = resub(anticrash_res, text)
+  #text = text.encode('mbcs')
+  #text = resub(anticrash_res, text)
   text = "`pp0 "+text.replace('`', ' ') #no embedded commands
   if _eloquence.params[9] in (196609, 196608): text = text.replace('quil', 'qil') #Sometimes this string make everything buggy with Eloquence in French
   text = pause_re.sub(r'\1 `p1\2\3', text)
