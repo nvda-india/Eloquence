@@ -90,8 +90,9 @@ class SynthDriver(synthDriverHandler.SynthDriver):
   defaultLanguage=self.language
   outlist = []
   for item in speechSequence:
-   if isinstance(item,str):
-    s=item
+   if (isinstance(item,str) or isinstance(item,bytes)):
+    s=str(item)
+    log.debugWarning("to be spoken: %s"%s)
     s = self.xspeakText(s)
     outlist.append((_eloquence.speak, (s,)))
     last = s
@@ -130,12 +131,13 @@ class SynthDriver(synthDriverHandler.SynthDriver):
 #this converts to ansi for anticrash. If this breaks with foreign langs, we can remove it.
   #text = text.encode('mbcs')
   #text = resub(anticrash_res, text)
-  text = "`pp0 "+text.replace('`', ' ') #no embedded commands
+  #text = "`pp0 "+text.replace('`', ' ') #no embedded commands
   if _eloquence.params[9] in (196609, 196608): text = text.replace('quil', 'qil') #Sometimes this string make everything buggy with Eloquence in French
   text = pause_re.sub(r'\1 `p1\2\3', text)
 #if two strings are sent separately, pause between them. This might fix some of the audio issues we're having.
   if should_pause:
    text = text + ' `p1.'
+  log.debugWarning("after resubs: %s"%text)
   return text
 #  _eloquence.speak(text, index)
 

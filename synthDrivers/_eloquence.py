@@ -1,8 +1,8 @@
 from logHandler import log
 import tones
 import ctypes
-from io import StringIO
-gb = StringIO()
+from io import BytesIO
+gb = BytesIO()
 speaking=False
 lang='enu'
 from ctypes import *
@@ -170,8 +170,9 @@ def callback (h, ms, lp, dt):
 #Accuracy is lost with this method, but it should stop the say all breakage.
 
  if speaking and ms == 0: #audio data
-  gb.write(string_at(buffer, lp*2))
-  if gb.tell() >= samples*2:
+  len =gb.write(string_at(buffer, lp*2))
+  log.debugWarning("length: %s"%len)
+  if len <= samples*2:
    _bgExec(bgPlay, gb.getvalue())
    if curindex is not None:
     _bgExec(setLast, curindex)
@@ -230,6 +231,7 @@ def speak(text):
 #Sometimes the synth slows down for one string of text. Why?
 #Trying to fix it here.
  if rate in vparams: text = "`vs%d" % (vparams[rate],)+text
+ log.debugWarning("speak got: %s"%text)
  dll.eciAddText(handle, text)
 
 def index(x):
