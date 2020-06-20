@@ -1,29 +1,35 @@
-#Copyright (C) 2009 eloquence fans
+#Copyright (C) 2009-2019 eloquence fans
 #synthDrivers/eci.py
 #todo: possibly add to this
-import speech
+import speech, tones
 punctuation = ",.?:;"
 punctuation = [x for x in punctuation]
 from ctypes import *
 import ctypes.wintypes
 from ctypes import wintypes
-import synthDriverHandler, os, config, re, queue as Queue, nvwave, threading, logging
-from logHandler import log
+import synthDriverHandler, os, config, re, nvwave, threading, logging,driverHandler
+from synthDriverHandler import SynthDriver, VoiceInfo, synthIndexReached, synthDoneSpeaking
 from synthDriverHandler import SynthDriver,VoiceInfo
-import synthDrivers._eloquence as _eloquence
-import languageHandler
+from . import _eloquence
 from collections import OrderedDict
+import unicodedata
+
 minRate=40
 maxRate=150
 anticrash_res = {
- re.compile(r'\b(|\d+|\W+)(|un|anti|re)c(ae|\xe6)sur', re.I): r'\1\2seizur',
+ re.compile(r'\b(|\d+|\W+)?(|un|anti|re)c(ae|\xe6)sur', re.I): r'\1\2seizur',
  re.compile(r"\b(|\d+|\W+)h'(r|v)[e]", re.I): r"\1h ' \2 e",
-# re.compile(r"\b(|\d+|\W+)wed[h]esday", re.I): r"\1wed hesday",
-re.compile(r'hesday'): ' hesday',
-  re.compile(r"\b(|\d+|\W+)tz[s]che", re.I): r"\1tz sche"
+ re.compile(r"\b(\w+[bdflmnrvzqh])hes([bcdfgjklmnprtw]\w+)\b", re.I): r"\1 hes\2",
+ re.compile(r"(\d):(\d\d[snrt][tdh])", re.I): r"\1 \2",
+ re.compile(r"h'([bdfjkpstvx']+)'([rtv][aeiou]?)", re.I): r"h \1 \2",
+ re.compile(r"(re|un|non|anti)cosp", re.I): r"\1kosp",
+ re.compile(r"(anti|non|re|un)caesure", re.I): r"\1ceasure",
+ re.compile(r"(EUR[A-Z]+)(\d+)", re.I): r"\1 \2",
+ re.compile(r"\b(|\d+|\W+)?t+z[s]che", re.I): r"\1tz sche"
 }
 
-pause_re = re.compile(r'([a-zA-Z])([.(),:!?])( |$)')
+pause_re = re.compile(r'([a-zA-Z])([.(),:;!?])( |$)')
+time_re = re.compile(r"(\d):(\d+):(\d+)")
 english_fixes = {
 re.compile(r'(\w+)\.([a-zA-Z]+)'): r'\1 dot \2',
 re.compile(r'([a-zA-Z0-9_]+)@(\w+)'): r'\1 at \2',
@@ -44,82 +50,83 @@ variants = {1:"Reed",
 7:"Grandma",
 8:"Grandpa"}
 
-# For langChangeCommand
-langsAnnotations={
-"en":"`l1",
-"en_US":"`l1.0",
-"en_UK":"`l1.1",
-"en_GB":"`l1.1",
-"es":"`l2",
-"es_ES":"`l2.0",
-"es_ME":"`l2.1",
-"fr":"`l3",
-"fr_FR":"`l3.0",
-"fr_CA":"`l3.1",
-"de":"`l4",
-"de_DE":"`l4",
-"it":"`l5",
-"it_IT":"`l5",
-"pt":"`l7",
-"pt_BR":"`l7.0",
-"pt_PT":"`l7.1",
-"fi":"`l9",
-"fi_FI":"`l9.0"
-}
+def strip_accents(s):
+  return ''.join(c for c in unicodedata.normalize('NFD', s)
+                  if unicodedata.category(c) != 'Mn')  
+                  
+def normalizeText(s):
+  """
+  Normalizes  text by removing unicode characters.
+  Tries to preserve accented characters if they fall into MBCS encoding page.
+  Tries to find closest ASCII characters if accented characters cannot be represented in MBCS.
+  """
+  result = []
+  for c in s:
+   try:
+    cc = c.encode('mbcs').decode('mbcs')
+   except UnicodeEncodeError:
+    cc = strip_accents(c)
+    try:
+     cc.encode('mbcs')
+    except UnicodeEncodeError:
+     cc = "?"
+   result.append(cc)
+  return "".join(result)
 
 class SynthDriver(synthDriverHandler.SynthDriver):
- supportedSettings=(SynthDriver.VoiceSetting(),SynthDriver.RateSetting(),SynthDriver.PitchSetting(),SynthDriver.InflectionSetting(),SynthDriver.VolumeSetting())
-# supportedSettings=(SynthDriver.VoiceSetting(),SynthDriver.VariantSetting(),SynthDriver.RateSetting(),SynthDriver.PitchSetting(),SynthDriver.InflectionSetting(),SynthDriver.VolumeSetting())
+ supportedSettings=(SynthDriver.VoiceSetting(), SynthDriver.VariantSetting(), SynthDriver.RateSetting(), SynthDriver.PitchSetting(),SynthDriver.InflectionSetting(),SynthDriver.VolumeSetting(), driverHandler.NumericDriverSetting("hsz", "Head Size"), driverHandler.NumericDriverSetting("rgh", "Roughness"), driverHandler.NumericDriverSetting("bth", "Breathiness"), driverHandler.BooleanDriverSetting("backquoteVoiceTags","Enable backquote voice &tags", True))
+ supportedCommands = {
+    speech.IndexCommand,
+    speech.CharacterModeCommand,
+    speech.LangChangeCommand,
+    speech.BreakCommand,
+    speech.PitchCommand,
+    speech.RateCommand,
+    speech.VolumeCommand,
+    speech.PhonemeCommand,
+ }
+ supportedNotifications = {synthIndexReached, synthDoneSpeaking} 
+ PROSODY_ATTRS = {
+  speech.PitchCommand: _eloquence.pitch,
+  speech.VolumeCommand: _eloquence.vlm,
+  speech.RateCommand: _eloquence.rate,
+ }
+ 
  description='ETI-Eloquence'
  name='eloquence'
- speakingLanguage=""
  @classmethod
  def check(cls):
   return _eloquence.eciCheck()
  def __init__(self):
-  _eloquence.initialize()
-  log.info("Using Eloquence version %s" % _eloquence.eciVersion())
+  _eloquence.initialize(self._onIndexReached)
   self.curvoice="enu"
   self.rate=50
-  self.speakingLanguage=languageHandler.getLanguage()
-  self.variant=1
+  self.variant = "1"
 
  def speak(self,speechSequence):
-#  print speechSequence
   last = None
-  defaultLanguage=self.language
   outlist = []
   for item in speechSequence:
-   if (isinstance(item,str) or isinstance(item,bytes)):
+   if isinstance(item,str):
     s=str(item)
-    log.debugWarning("to be spoken: %s"%s)
     s = self.xspeakText(s)
     outlist.append((_eloquence.speak, (s,)))
     last = s
    elif isinstance(item,speech.IndexCommand):
     outlist.append((_eloquence.index, (item.index,)))
-   elif isinstance(item,speech.LangChangeCommand):
-    if (item.lang and item.lang in langsAnnotations):
-     if self.speakingLanguage!=item.lang and item.lang!=self.speakingLanguage[0:2]:
-      outlist.append((_eloquence.speak, (langsAnnotations[item.lang],)))
-      self.speakingLanguage=item.lang
-    elif (item.lang and item.lang[0:2] in langsAnnotations):
-     if self.speakingLanguage!=item.lang and item.lang!=self.speakingLanguage[0:2]:
-      outlist.append((_eloquence.speak, (langsAnnotations[item.lang[0:2]],)))
-     self.speakingLanguage=item.lang[0:2]
+   elif isinstance(item,speech.BreakCommand):
+    pFactor = 3 * item.time
+    outlist.append((_eloquence.speak, (f'`p{pFactor}.',)))
+   elif type(item) in self.PROSODY_ATTRS:
+    pr = self.PROSODY_ATTRS[type(item)]
+    if item.multiplier==1:
+     # Revert back to defaults
+     outlist.append((_eloquence.cmdProsody, (pr, None,)))
     else:
-     outlist.append((_eloquence.speak, (langsAnnotations[defaultLanguage],)))
-     self.speakingLanguage = defaultLanguage
-   elif isinstance(item,speech.CharacterModeCommand):
-    outlist.append((_eloquence.speak, ("`ts1" if item.state else "`ts0",)))
-   elif isinstance(item,speech.SpeechCommand):
-    log.debugWarning("Unsupported speech command: %s"%item)
-   else:
-    log.error("Unknown speech: %s"%item)
+     outlist.append((_eloquence.cmdProsody, (pr, item.multiplier,)))
   if last is not None and not last.rstrip()[-1] in punctuation:
    outlist.append((_eloquence.speak, ('`p1.',)))
   outlist.append((_eloquence.index, (0xffff,)))
-  outlist.append((_eloquence.speak, ("`ts0",)))
   outlist.append((_eloquence.synth,()))
   _eloquence.synth_queue.put(outlist)
   _eloquence.process()
@@ -128,29 +135,39 @@ class SynthDriver(synthDriverHandler.SynthDriver):
   if _eloquence.params[9] == 65536 or _eloquence.params[9] == 65537: text = resub(english_fixes, text)
   if _eloquence.params[9] == 131072 or _eloquence.params[9] == 131073: text = resub(spanish_fixes, text)
   if _eloquence.params[9] in (196609, 196608): text = resub(french_fixes, text)
-#this converts to ansi for anticrash. If this breaks with foreign langs, we can remove it.
+  #this converts to ansi for anticrash. If this breaks with foreign langs, we can remove it.
   #text = text.encode('mbcs')
-  #text = resub(anticrash_res, text)
-  #text = "`pp0 "+text.replace('`', ' ') #no embedded commands
-  if _eloquence.params[9] in (196609, 196608): text = text.replace('quil', 'qil') #Sometimes this string make everything buggy with Eloquence in French
+  text = normalizeText(text)
+  text = resub(anticrash_res, text)
+  if not self._backquoteVoiceTags:
+   text=text.replace('`', ' ')
+  text = "`pp0 `vv%d %s" % (self.getVParam(_eloquence.vlm), text) #no embedded commands
   text = pause_re.sub(r'\1 `p1\2\3', text)
-#if two strings are sent separately, pause between them. This might fix some of the audio issues we're having.
+  text = time_re.sub(r'\1:\2 \3', text)
+  #if two strings are sent separately, pause between them. This might fix some of the audio issues we're having.
   if should_pause:
    text = text + ' `p1.'
-  log.debugWarning("after resubs: %s"%text)
   return text
-#  _eloquence.speak(text, index)
-
-# def cancel(self):
-#  self.dll.eciStop(self.handle)
+  #  _eloquence.speak(text, index)
+  
+  # def cancel(self):
+  #  self.dll.eciStop(self.handle)
 
  def pause(self,switch):
   _eloquence.pause(switch)
-#  self.dll.eciPause(self.handle,switch)
+  #  self.dll.eciPause(self.handle,switch)
 
  def terminate(self):
   _eloquence.terminate()
+ _backquoteVoiceTags=False
+ def _get_backquoteVoiceTags(self):
+  return self._backquoteVoiceTags
 
+ def _set_backquoteVoiceTags(self, enable):
+  if enable == self._backquoteVoiceTags:
+   return
+  self._backquoteVoiceTags = enable
+ 
  def _get_rate(self):
   return self._paramToPercent(self.getVParam(_eloquence.rate),minRate,maxRate)
 
@@ -176,13 +193,33 @@ class SynthDriver(synthDriverHandler.SynthDriver):
 
  def _get_inflection(self):
   return self.getVParam(_eloquence.fluctuation)
+ def _set_hsz(self,vl):
+  vl = int(vl)
+  self.setVParam(_eloquence.hsz,vl)
+
+ def _get_hsz(self):
+  return self.getVParam(_eloquence.hsz)
+
+ def _set_rgh(self,vl):
+  vl = int(vl)
+  self.setVParam(_eloquence.rgh,vl)
+
+ def _get_rgh(self):
+  return self.getVParam(_eloquence.rgh)
+
+ def _set_bth(self,vl):
+  vl = int(vl)
+  self.setVParam(_eloquence.bth,vl)
+
+ def _get_bth(self):
+  return self.getVParam(_eloquence.bth)
 
  def _getAvailableVoices(self):
   o = OrderedDict()
   for name in os.listdir(_eloquence.eciPath[:-8]):
    if not name.lower().endswith('.syn'): continue
    info = _eloquence.langs[name.lower()[:-4]]
-   o[str(info[0])] = synthDriverHandler.VoiceInfo(str(info[0]), info[1], info[2])
+   o[str(info[0])] = synthDriverHandler.VoiceInfo(str(info[0]), info[1], None)
   return o
 
  def _get_voice(self):
@@ -197,26 +234,33 @@ class SynthDriver(synthDriverHandler.SynthDriver):
   _eloquence.setVParam(pr, vl)
 
  def _get_lastIndex(self):
-#fix?
+  #fix?
   return _eloquence.lastindex
 
  def cancel(self):
   _eloquence.stop()
 
  def _getAvailableVariants(self):
+  
   global variants
-  return OrderedDict((id, synthDriverHandler.VoiceInfo(id, name)) for id, name in variants.iteritems())
+  return OrderedDict((str(id), synthDriverHandler.VoiceInfo(str(id), name)) for id, name in variants.items())
 
  def _set_variant(self, v):
   global variants
-  v = int(v)
-  self._variant = v if v in variants else 1
-  _eloquence.setVariant(v)
+  self._variant = v if int(v) in variants else "1"
+  _eloquence.setVariant(int(v))
   self.setVParam(_eloquence.rate, self._rate)
-#  if 'eloquence' in config.conf['speech']:
-#   config.conf['speech']['eloquence']['pitch'] = self.pitch
+  #  if 'eloquence' in config.conf['speech']:
+  #   config.conf['speech']['eloquence']['pitch'] = self.pitch
 
  def _get_variant(self): return self._variant
+ 
+ def _onIndexReached(self, index):
+  if index is not None:
+   synthIndexReached.notify(synth=self, index=index)
+  else:
+   synthDoneSpeaking.notify(synth=self)
+ 
 
 def resub(dct, s):
  for r in dct.keys():
