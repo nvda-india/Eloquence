@@ -10,6 +10,19 @@ from ctypes import wintypes
 import synthDriverHandler, os, config, re, nvwave, threading, logging,driverHandler
 from synthDriverHandler import SynthDriver, VoiceInfo, synthIndexReached, synthDoneSpeaking
 from synthDriverHandler import SynthDriver,VoiceInfo
+from autoSettingsUtils.driverSetting import BooleanDriverSetting, DriverSetting, NumericDriverSetting
+from autoSettingsUtils.utils import StringParameterInfo
+from speech.commands import (
+	IndexCommand,
+	CharacterModeCommand,
+	LangChangeCommand,
+	BreakCommand,
+	PitchCommand,
+	RateCommand,
+	VolumeCommand,
+	PhonemeCommand,
+)
+
 from . import _eloquence
 from collections import OrderedDict
 import unicodedata
@@ -74,25 +87,25 @@ def normalizeText(s):
   return "".join(result)
 
 class SynthDriver(synthDriverHandler.SynthDriver):
- supportedSettings=(SynthDriver.VoiceSetting(), SynthDriver.VariantSetting(), SynthDriver.RateSetting(), SynthDriver.PitchSetting(),SynthDriver.InflectionSetting(),SynthDriver.VolumeSetting(), driverHandler.NumericDriverSetting("hsz", "Head Size"), driverHandler.NumericDriverSetting("rgh", "Roughness"), driverHandler.NumericDriverSetting("bth", "Breathiness"), driverHandler.BooleanDriverSetting("backquoteVoiceTags","Enable backquote voice &tags", True))
+ supportedSettings=(SynthDriver.VoiceSetting(), SynthDriver.VariantSetting(), SynthDriver.RateSetting(), SynthDriver.PitchSetting(),SynthDriver.InflectionSetting(),SynthDriver.VolumeSetting(), NumericDriverSetting("hsz", "Head Size"), NumericDriverSetting("rgh", "Roughness"), NumericDriverSetting("bth", "Breathiness"), BooleanDriverSetting("backquoteVoiceTags","Enable backquote voice &tags", True))
  supportedCommands = {
-    speech.IndexCommand,
-    speech.CharacterModeCommand,
-    speech.LangChangeCommand,
-    speech.BreakCommand,
-    speech.PitchCommand,
-    speech.RateCommand,
-    speech.VolumeCommand,
-    speech.PhonemeCommand,
+    IndexCommand,
+    CharacterModeCommand,
+    LangChangeCommand,
+    BreakCommand,
+    PitchCommand,
+    RateCommand,
+    VolumeCommand,
+    PhonemeCommand,
  }
  supportedNotifications = {synthIndexReached, synthDoneSpeaking} 
  PROSODY_ATTRS = {
-  speech.PitchCommand: _eloquence.pitch,
-  speech.VolumeCommand: _eloquence.vlm,
-  speech.RateCommand: _eloquence.rate,
+  PitchCommand: _eloquence.pitch,
+  VolumeCommand: _eloquence.vlm,
+  RateCommand: _eloquence.rate,
  }
  
- description='ETI-Eloquence'
+ description='Saksham-Eloquence'
  name='eloquence'
  @classmethod
  def check(cls):
@@ -112,9 +125,9 @@ class SynthDriver(synthDriverHandler.SynthDriver):
     s = self.xspeakText(s)
     outlist.append((_eloquence.speak, (s,)))
     last = s
-   elif isinstance(item,speech.IndexCommand):
+   elif isinstance(item,IndexCommand):
     outlist.append((_eloquence.index, (item.index,)))
-   elif isinstance(item,speech.BreakCommand):
+   elif isinstance(item,BreakCommand):
     pFactor = 3 * item.time
     outlist.append((_eloquence.speak, (f'`p{pFactor}.',)))
    elif type(item) in self.PROSODY_ATTRS:
